@@ -38,7 +38,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_current.x | bash - \
         > /etc/apt/sources.list.d/docker.list \
     && curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
         | gpg --dearmor -o /usr/share/keyrings/microsoft.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/azure-cli/ $(. /etc/os-release && echo "$VERSION_CODENAME") main" \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/azure-cli/ noble main" \
         > /etc/apt/sources.list.d/azure-cli.list
 
 # Install all apt packages in one layer
