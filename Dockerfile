@@ -2,6 +2,7 @@ FROM ubuntu:latest
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Bootstrap: tools needed to add third-party apt repos
 RUN apt-get update && apt-get install -y \
     curl \
     ca-certificates \
@@ -20,43 +21,40 @@ RUN usermod -l vscode ubuntu \
     && usermod -d /home/vscode -m vscode \
     && groupmod -n vscode ubuntu
 
-# Node.js (latest via NodeSource)
+# Register third-party apt repos: NodeSource, GitHub CLI, MongoDB, Docker, Azure CLI
 RUN curl -fsSL https://deb.nodesource.com/setup_current.x | bash - \
-    && apt-get install -y nodejs \
-    && rm -rf /var/lib/apt/lists/*
-
-# Python (latest available in Ubuntu repos)
-RUN apt-get update && apt-get install -y \
-    python3 \
-    python3-pip \
-    python3-venv \
-    && ln -sf /usr/bin/python3 /usr/local/bin/python \
-    && rm -rf /var/lib/apt/lists/*
-
-# GitHub CLI
-RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
         | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
     && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
         > /etc/apt/sources.list.d/github-cli.list \
-    && apt-get update && apt-get install -y gh \
-    && rm -rf /var/lib/apt/lists/*
-
-# mongosh (MongoDB Shell)
-RUN curl -fsSL https://www.mongodb.org/static/pgp/server-8.0.asc \
+    && curl -fsSL https://www.mongodb.org/static/pgp/server-8.0.asc \
         | gpg --dearmor -o /usr/share/keyrings/mongodb-server-8.0.gpg \
     && echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg ] https://repo.mongodb.org/apt/ubuntu noble/mongodb-org/8.0 multiverse" \
         > /etc/apt/sources.list.d/mongodb-org-8.0.list \
-    && apt-get update && apt-get install -y mongodb-mongosh \
-    && rm -rf /var/lib/apt/lists/*
+    && curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+        | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+        > /etc/apt/sources.list.d/docker.list \
+    && curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
+        | gpg --dearmor -o /usr/share/keyrings/microsoft.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/azure-cli/ $(. /etc/os-release && echo "$VERSION_CODENAME") main" \
+        > /etc/apt/sources.list.d/azure-cli.list
 
-# sqlcmd (go-sqlcmd binary — avoids apt repo package name changes)
-RUN curl -fsSL "https://github.com/microsoft/go-sqlcmd/releases/latest/download/sqlcmd-linux-amd64.tar.bz2" \
-        | tar -xj -C /usr/local/bin sqlcmd \
-    && chmod +x /usr/local/bin/sqlcmd
-
-# Network, data-processing, and general dev tools
+# Install all apt packages in one layer
 RUN apt-get update && apt-get install -y \
+    # Node.js (latest via NodeSource)
+    nodejs \
+    # Python
+    python3 \
+    python3-pip \
+    python3-venv \
+    # GitHub CLI
+    gh \
+    # MongoDB Shell
+    mongodb-mongosh \
+    # Java
+    default-jdk-headless \
     # network
     wget \
     dnsutils \
@@ -74,6 +72,11 @@ RUN apt-get update && apt-get install -y \
     xmlstarlet \
     libxml2-utils \
     crudini \
+    # Docker CLI (daemon runs on the host via socket mount)
+    docker-ce-cli \
+    docker-compose-plugin \
+    # Azure CLI
+    azure-cli \
     # general utilities
     git \
     sudo \
@@ -87,21 +90,45 @@ RUN apt-get update && apt-get install -y \
     tree \
     htop \
     default-mysql-client \
+    && ln -sf /usr/bin/python3 /usr/local/bin/python \
     && rm -rf /var/lib/apt/lists/*
+
+# sqlcmd (go-sqlcmd binary — avoids apt repo package name changes)
+RUN curl -fsSL "https://github.com/microsoft/go-sqlcmd/releases/latest/download/sqlcmd-linux-amd64.tar.bz2" \
+        | tar -xj -C /usr/local/bin sqlcmd \
+    && chmod +x /usr/local/bin/sqlcmd
 
 # yq (YAML/JSON/XML/TOML/CSV processor — binary release)
 RUN curl -fsSL "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)" \
         -o /usr/local/bin/yq \
     && chmod +x /usr/local/bin/yq
 
-# Allow vscode user to use sudo without a password
-RUN echo "vscode ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/vscode \
-    && chmod 0440 /etc/sudoers.d/vscode
+# AWS CLI (official bundled installer — handles amd64 and arm64)
+RUN ARCH=$(dpkg --print-architecture | sed 's/amd64/x86_64/;s/arm64/aarch64/') \
+    && curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${ARCH}.zip" -o /tmp/awscliv2.zip \
+    && unzip -q /tmp/awscliv2.zip -d /tmp \
+    && /tmp/aws/install \
+    && rm -rf /tmp/awscliv2.zip /tmp/aws
 
-# OpenJDK (latest available in Ubuntu repos)
-RUN apt-get update && apt-get install -y \
-    default-jdk-headless \
-    && rm -rf /var/lib/apt/lists/*
+# Fly CLI
+RUN curl -fsSL https://fly.io/install.sh | FLYCTL_INSTALL=/usr/local sh
+
+# Wrangler CLI (Cloudflare — npm global, Node.js already installed)
+RUN npm install -g wrangler
+
+# Terraform toolchain: tfenv + latest Terraform + tflint
+RUN git clone --depth=1 https://github.com/tfutils/tfenv.git /usr/local/tfenv \
+    && ln -s /usr/local/tfenv/bin/tfenv /usr/local/bin/tfenv \
+    && ln -s /usr/local/tfenv/bin/terraform /usr/local/bin/terraform \
+    && tfenv install latest \
+    && tfenv use latest \
+    && curl -fsSL https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
+
+# Allow vscode user to use sudo without a password; add to docker group for socket access
+RUN echo "vscode ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/vscode \
+    && chmod 0440 /etc/sudoers.d/vscode \
+    && groupadd -f docker \
+    && usermod -aG docker vscode
 
 # .NET (latest LTS via install script — avoids apt repo lag on new Ubuntu releases)
 ENV DOTNET_ROOT=/usr/local/dotnet
